@@ -1,0 +1,98 @@
+Project: Course RAG (Organic Chemistry / Physics / Biology)
+Purpose: PDF-to-RAG pipeline with local embeddings (Ollama or sentence-transformers) and a FastAPI + HTML frontend.
+
+Pipeline (cleaning/)
+- step1_extract_text.py: extract raw text with page markers into cleaning/text_workdir/.
+- step1b_extract_images.py (optional): extract figures per subject/book into cleaning/images/<subject>/<book>/ and metadata JSONL.
+- step2_trim_pages.py: trim front/back matter into cleaning/clean_text/.
+- step3_normalize_text.py: strip headers/footers, normalize whitespace into cleaning/clean_text/*_normalized.txt.
+- step4_chunk_text.py: paragraph-aware chunking to ~280 words with 40-word overlap into cleaning/chunks/<subject>/*_chunks.jsonl (id, word_count, text).
+- step5_embed_chunks.py: sentence-transformers (default all-MiniLM-L6-v2) → cleaning/chunks/..._embeddings.npy + ..._embeddings_meta.jsonl.
+- step6_ollama_embed_chunks.py: Ollama embeddings (default mxbai-embed-large) → ..._embeddings_ollama.npy + meta.
+
+Runtime stack (app/)
+- FastAPI backend (app/main.py) with /api/qa and /api/subjects, uses Ollama for embeddings + LLM (defaults: mxbai-embed-large, llama3).
+- Retrieval: cosine similarity (or Faiss if installed) over precomputed embeddings; returns top-k contexts and LLM answer (optionally refined).
+- Frontend: app/static/index.html (plain JS) to pick subject, submit question, and show answer + context snippets.
+
+How to run (dev)
+- Start Ollama with required models pulled: `ollama pull mxbai-embed-large` and `ollama pull llama3`.
+- API: `uvicorn app.main:app --reload`.
+- Frontend: open http://localhost:8000/ (served by the same FastAPI app).
+- CLI retrieval only: `python retrieval/retrieve.py "question" --subject chemistry`.
+- CLI QA: `python retrieval/qa.py "question" --subject chemistry --top-k 5`.
+
+Data expectations
+- Chemistry paths are prewired; physics/biology slots exist (ensure their chunks + embeddings + meta are generated).
+- Chunk/meta IDs align; embeddings_*_meta.jsonl contains the chunk ids.
+- Image metadata lives under cleaning/images/<subject>/<book>_images.jsonl (page, image_path, optional OCR).
+
+Notes for PPT/report (structure)
+- Problem & goal: local RAG for textbooks; constraints (offline-friendly, multi-subject).
+- Data pipeline: brief per-step bullets (what, why, command, outputs).
+- Models: embedding choice (sentence-transformers vs Ollama), LLM choice (llama3), normalization of embeddings for cosine/IP.
+- App architecture: cache of chunks/embeddings, optional Faiss, API flow (/api/subjects, /api/qa), frontend UX.
+- Current status: chemistry ready; physics/biology wiring present; images optional; no evaluation harness yet.
+- Risks/limitations: model availability (Ollama running), alignment of chunk IDs, missing physics embeddings until generated, no ground-truth QA set yet.
+- Future work: evaluation harness, image retrieval/display, better prompts, per-subject difficulty analysis.
+
+Evaluation & metrics plan
+Ground truth setup
+- Create a gold QA set per subject (JSONL): {id, subject, question, answer_ref, ref_chunks:[ids], difficulty:[easy/med/hard], tags:[topic]}.
+- Optional: include gold reference answer text for generation metrics; include allowed source spans or citations.
+
+Quickstart evaluator (added)
+- Script: eval/run_eval.py
+- Example (retrieval only): python eval/run_eval.py --gold eval/sample_gold.jsonl --top-k 5 --skip-generation
+- Example (with generation metrics; needs Ollama running): python eval/run_eval.py --gold eval/sample_gold.jsonl --top-k 5
+- Output: prints summary (P/R/MAP/MRR/nDCG, plus BLEU/ROUGE-L if generation enabled); optionally writes JSON via --out.
+
+Retrieval metrics (per subject and overall)
+- Precision@k, Recall@k, MRR, MAP@k, nDCG@k using ref_chunks as relevance.
+- Implementation sketch: load embeddings + meta; embed query via Ollama; search; compare returned ids to ref_chunks; aggregate by subject, difficulty, tag.
+
+Context faithfulness / hallucination checks
+- Exact-overlap: measure lexical overlap between answer and concatenated gold contexts; flag if answer contains high-probability unsupported statements (weak).
+- LLM judge: prompt a lightweight model with {question, answer, gold_context} to label Supported / Partially / Unsupported and extract hallucinated spans.
+- Citation-style: require answers to include chunk ids, then verify cited ids are in top-k and belong to ref_chunks.
+
+Generation quality metrics
+- ROUGE-L / BLEU between model answer and gold reference answer (per QA in gold set).
+- BERTScore (or sentence-transformer similarity) for semantic alignment.
+- Length/verbosity penalties: measure answer length vs reference; penalize excessive expansion.
+- Human spot-checks on a small sample to calibrate LLM-judge thresholds.
+
+End-to-end scorecard (per subject, per difficulty)
+- Retrieval: P@k, R@k, MAP@k, nDCG@k.
+- Faithfulness: % Supported by judge; hallucination rate; citation accuracy (if used).
+- Generation: ROUGE-L, BLEU, BERTScore; average length; refusal rate.
+- Latency: avg p50/p95 for embed + search + generate (optional).
+
+Visualization ideas for slides/report
+- Bar charts: P@5 / MAP@5 by subject; ROUGE-L by subject.
+- Stacked bars by difficulty (easy/med/hard).
+- Heatmap (subject x topic tag) for retrieval precision.
+- Scatter of answer length vs faithfulness score.
+- Line chart of latency components (embed/search/generate) per model.
+- Small multiples comparing embedding models (all-MiniLM vs mxbai-embed-large).
+- Quick plotting script: eval/plot_eval.py reads JSON from run_eval.py (--out) and writes bar charts for P/R/nDCG/MAP/MRR (+ BLEU/ROUGE if present). Example: python eval/plot_eval.py --results eval/results.json --out-dir eval/plots
+
+Implementation outline for eval script (proposed new file eval/run_eval.py)
+- Load gold JSONL; group by subject.
+- For each sample: embed query, retrieve top-k (reuse retrieval code), compute ranked ids.
+- Metrics:
+  - Retrieval: standard IR functions (precision_at_k, recall_at_k, ap, ndcg).
+  - Generation: call /api/qa or directly call call_llm; compute ROUGE/ BLEU via rouge-score / sacrebleu; compute BERTScore via model.
+  - Faithfulness: optional LLM judge call; store label + confidence.
+- Persist results to JSON/CSV for plotting; aggregate by subject, difficulty, tags.
+
+Notes to add when presenting metrics
+- Clarify that retrieval metrics need gold relevant chunk ids; if unavailable, approximate with heuristic (chunk containing the page/section of gold answer) until curated.
+- Hallucination detection with LLM judge is probabilistic—report prompt, model, and threshold.
+- ROUGE/ BLEU require a reference answer; for textbook QA, create short reference answers from the text (1–3 sentences).
+- Include confidence intervals or bootstrap over the QA set when possible.
+
+Next optional improvements
+- Add page metadata to chunks to align with images; allow image snippets in answers and evaluation of multimodal retrieval later.
+- Add logging of per-request latency and token counts to support efficiency reporting.
+- Add small front-end section to display evaluation scorecards or to toggle models.

@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Course RAG</title>
+  <style>
+    :root {
+      --bg: #0c1021;
+      --panel: #11162b;
+      --card: #151c34;
+      --accent: #4fd1c5;
+      --muted: #9fb0c9;
+      --text: #e8edf6;
+      --danger: #ef6b6b;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: "Inter", system-ui, -apple-system, sans-serif; background: radial-gradient(circle at 20% 20%, #132041, #0c1021 45%), radial-gradient(circle at 80% 10%, #0f1f3c, #0c1021 50%); color: var(--text); }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 32px 20px 64px; }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+    h1 { margin: 0; font-size: 28px; letter-spacing: -0.5px; }
+    p.lede { margin: 6px 0 0; color: var(--muted); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 12px 0 20px; }
+    .card { border: 1px solid transparent; background: var(--card); padding: 14px; border-radius: 10px; cursor: pointer; transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease; }
+    .card:hover { transform: translateY(-2px); border-color: #2c3e64; }
+    .card.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+    .card h3 { margin: 0 0 6px; font-size: 17px; }
+    .card p { margin: 0; color: var(--muted); font-size: 14px; }
+    textarea { width: 100%; min-height: 110px; padding: 12px; font-size: 16px; border-radius: 10px; border: 1px solid #223152; background: #0f152b; color: var(--text); }
+    textarea:focus { outline: 2px solid #2b8cff; }
+    button { margin-top: 12px; padding: 12px 20px; font-size: 16px; border: none; border-radius: 10px; background: linear-gradient(120deg, #2b8cff, #4fd1c5); color: #0c1021; font-weight: 700; cursor: pointer; }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    .status { min-height: 22px; color: var(--muted); margin: 6px 0; }
+    .panel { background: var(--panel); border: 1px solid #1c2545; border-radius: 12px; padding: 16px; margin-top: 18px; }
+    .panel h3 { margin: 0 0 10px; }
+    .ctx { margin-bottom: 12px; }
+    .ctx strong { color: var(--accent); }
+    .snippet { color: var(--muted); font-size: 14px; }
+    @media (max-width: 600px) { header { flex-direction: column; align-items: flex-start; } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div>
+        <h1>Course RAG</h1>
+        <p class="lede">Pick a course card, ask a question, and we’ll retrieve from its embeddings.</p>
+      </div>
+      <div id="selected" class="lede"></div>
+    </header>
+
+    <div id="courses" class="grid"></div>
+
+    <label for="query" class="lede">Question</label>
+    <textarea id="query" placeholder="e.g., Summarize glycolysis regulation"></textarea>
+    <button id="ask">Ask</button>
+    <div class="status" id="status"></div>
+
+    <div class="panel">
+      <h3>Answer</h3>
+      <div id="answer"></div>
+    </div>
+    <div class="panel">
+      <h3>Contexts</h3>
+      <div id="contexts"></div>
+    </div>
+  </div>
+  <script>
+    const btn = document.getElementById('ask');
+    const qEl = document.getElementById('query');
+    const statusEl = document.getElementById('status');
+    const ansEl = document.getElementById('answer');
+    const ctxEl = document.getElementById('contexts');
+    const coursesEl = document.getElementById('courses');
+    const selectedEl = document.getElementById('selected');
+
+    let subjects = [];
+    let selected = null;
+
+    function renderCourses() {
+      coursesEl.innerHTML = subjects.map(s => `
+        <div class="card ${s.key === selected ? 'active' : ''}" data-key="${s.key}">
+          <h3>${s.title}</h3>
+          <p>${s.tagline || ''}</p>
+          ${s.has_data ? '' : '<p style="color: var(--danger); margin-top:6px;">missing data</p>'}
+        </div>
+      `).join('');
+      coursesEl.querySelectorAll('.card').forEach(card => {
+        card.addEventListener('click', () => {
+          selected = card.dataset.key;
+          renderCourses();
+          selectedEl.textContent = `Selected: ${subjects.find(s => s.key === selected)?.title || selected}`;
+        });
+      });
+      if (!selected && subjects.length) {
+        selected = subjects[0].key;
+        selectedEl.textContent = `Selected: ${subjects[0].title}`;
+        renderCourses();
+      }
+    }
+
+    async function loadSubjects() {
+      try {
+        const resp = await fetch('/api/subjects');
+        if (!resp.ok) throw new Error('Failed to load subjects');
+        const data = await resp.json();
+        subjects = data.subjects || [];
+      } catch (e) {
+        subjects = [
+          { key: 'chemistry', title: 'Chemistry', tagline: 'Organic Chemistry' },
+          { key: 'physics', title: 'Physics', tagline: 'University Physics' },
+          { key: 'biology', title: 'Biology', tagline: 'Course pack' },
+        ];
+      }
+      renderCourses();
+    }
+
+    async function ask() {
+      const q = qEl.value.trim();
+      if (!q || !selected) return;
+      btn.disabled = true;
+      statusEl.textContent = 'Thinking...';
+      ansEl.textContent = '';
+      ctxEl.innerHTML = '';
+      try {
+        const resp = await fetch('/api/qa', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: q, top_k: 5, subject: selected })
+        });
+        if (!resp.ok) {
+          const err = await resp.text();
+          throw new Error(err);
+        }
+        const data = await resp.json();
+        ansEl.textContent = data.answer;
+        const frags = data.contexts.map(c => `<div class="ctx"><strong>${c.id}</strong> (score ${c.score})<div class="snippet">${c.snippet}</div></div>`).join('');
+        ctxEl.innerHTML = frags || '<div class="snippet">No contexts returned.</div>';
+      } catch (e) {
+        ansEl.textContent = '';
+        ctxEl.innerHTML = `<div style="color: var(--danger);">Error: ${e.message}</div>`;
+      } finally {
+        statusEl.textContent = '';
+        btn.disabled = false;
+      }
+    }
+
+    btn.addEventListener('click', ask);
+    loadSubjects();
+  </script>
+</body>
+</html>
