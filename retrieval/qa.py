@@ -1,4 +1,3 @@
-"""Simple RAG QA: retrieve top chunks and answer with an Ollama LLM."""
 from __future__ import annotations
 
 import argparse
@@ -20,7 +19,6 @@ SUBJECTS = {
         "meta": ROOT / "cleaning" / "chunks" / "chemistry" / "OrganicChemistry-SAMPLE_9ADraVJ_embeddings_ollama_meta.jsonl",
     },
     "physics": {
-        # Update these paths after generating physics chunks/embeddings
         "chunks": ROOT / "cleaning" / "chunks" / "physics" / "UniversityPhysics15e_chunks.jsonl",
         "embeddings": ROOT / "cleaning" / "chunks" / "physics" / "UniversityPhysics15e_embeddings_ollama.npy",
         "meta": ROOT / "cleaning" / "chunks" / "physics" / "UniversityPhysics15e_embeddings_ollama_meta.jsonl",
@@ -29,6 +27,11 @@ SUBJECTS = {
         "chunks": ROOT / "cleaning" / "chunks" / "biology" / "bio_merged_chunks.jsonl",
         "embeddings": ROOT / "cleaning" / "chunks" / "biology" / "bio_merged_embeddings_ollama.npy",
         "meta": ROOT / "cleaning" / "chunks" / "biology" / "bio_merged_embeddings_ollama_meta.jsonl",
+    },
+    "math": {
+        "chunks": ROOT / "cleaning" / "chunks" / "math" / "math_unified_chunks.jsonl",
+        "embeddings": ROOT / "cleaning" / "chunks" / "math" / "math_unified_embeddings_ollama.npy",
+        "meta": ROOT / "cleaning" / "chunks" / "math" / "math_unified_embeddings_ollama_meta.jsonl",
     },
 }
 
@@ -83,44 +86,24 @@ def top_k(scores: np.ndarray, ids: List[str], k: int) -> List[Tuple[str, float]]
 
 
 STOPWORDS = {
-    "the",
-    "a",
-    "an",
-    "and",
-    "or",
-    "of",
-    "in",
-    "on",
-    "for",
-    "to",
-    "with",
-    "by",
-    "at",
-    "from",
-    "as",
-    "that",
-    "this",
-    "these",
-    "those",
-    "is",
-    "are",
-    "was",
-    "were",
+    "the", "a", "an", "and", "or", "of", "in", "on", "for", "to",
+    "with", "by", "at", "from", "as", "that", "this", "these",
+    "those", "is", "are", "was", "were",
 }
 
 
-def rerank_with_overlap(
-    query: str, results: List[Tuple[str, float]], chunks: Dict[str, str]
-) -> List[Tuple[str, float]]:
+def rerank_with_overlap(query: str, results: List[Tuple[str, float]], chunks: Dict[str, str]) -> List[Tuple[str, float]]:
     tokens = [t for t in re.findall(r"\w+", query.lower()) if len(t) > 2 and t not in STOPWORDS]
     if not tokens:
         return results
+
     scored: List[Tuple[str, float, float]] = []
     for cid, base in results:
         text = chunks.get(cid, "").lower()
         overlap = sum(1 for tok in tokens if tok in text)
         combined = base + 0.05 * overlap
         scored.append((cid, base, combined))
+
     scored.sort(key=lambda x: x[2], reverse=True)
     return [(cid, base) for cid, base, _ in scored]
 
@@ -152,6 +135,7 @@ def call_llm(model: str, prompt: str) -> str:
         "stream": False,
         "options": {"temperature": 0},
     }
+
     try:
         resp = requests.post(CHAT_URL, json=payload)
         resp.raise_for_status()
@@ -159,6 +143,7 @@ def call_llm(model: str, prompt: str) -> str:
         sys.stderr.write(f"LLM request failed ({resp.status_code}): {resp.text}\n")
         sys.stderr.write("Make sure the chat model is pulled and running (e.g., `ollama pull llama3`).\n")
         raise SystemExit(1) from exc
+
     data = resp.json()
     return data["message"]["content"]
 
@@ -167,9 +152,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Retrieve + answer via Ollama LLM.")
     parser.add_argument("query", help="User question")
     parser.add_argument("--embed-model", default=DEFAULT_EMBED_MODEL, help="Ollama embedding model")
-    parser.add_argument("--llm-model", default=DEFAULT_LLM_MODEL, help="Ollama LLM for answering")
+    parser.add.add_argument("--llm-model", default=DEFAULT_LLM_MODEL, help="Ollama LLM for answering")
     parser.add_argument("--top-k", type=int, default=5, help="Number of contexts to include")
-    parser.add_argument("--subject", default="chemistry", help="Subject key (chemistry, physics, ...)")
+    parser.add_argument("--subject", default="chemistry", help="Subject key (chemistry, physics, biology, math)")
     return parser.parse_args()
 
 
@@ -177,7 +162,6 @@ def main() -> None:
     args = parse_args()
 
     chunks_path, emb_path, meta_path = get_paths(args.subject)
-
     if not (emb_path.exists() and meta_path.exists() and chunks_path.exists()):
         sys.stderr.write(f"Embeddings or chunk files are missing for subject '{args.subject}'.\n")
         sys.stderr.write(f"Expected: {chunks_path}, {emb_path}, {meta_path}\n")
@@ -192,9 +176,7 @@ def main() -> None:
     scores = cosine_sim_matrix(q_vec, emb_matrix)
     results = rerank_with_overlap(args.query, top_k(scores, meta_ids, args.top_k), chunks)
 
-    contexts: List[Tuple[str, str]] = []
-    for cid, _score in results:
-        contexts.append((cid, chunks.get(cid, "")))
+    contexts: List[Tuple[str, str]] = [(cid, chunks.get(cid, "")) for cid, _score in results]
 
     prompt = build_prompt(args.query, contexts)
     answer = call_llm(args.llm_model, prompt)

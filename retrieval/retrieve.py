@@ -1,4 +1,3 @@
-"""Retrieve top chunks for a query using Ollama embeddings."""
 from __future__ import annotations
 
 import argparse
@@ -18,16 +17,19 @@ SUBJECTS = {
         "meta": ROOT / "cleaning" / "chunks" / "chemistry" / "OrganicChemistry-SAMPLE_9ADraVJ_embeddings_ollama_meta.jsonl",
     },
     "physics": {
-        # Update these paths after generating physics chunks/embeddings
         "chunks": ROOT / "cleaning" / "chunks" / "physics" / "UniversityPhysics15e_chunks.jsonl",
         "embeddings": ROOT / "cleaning" / "chunks" / "physics" / "UniversityPhysics15e_embeddings_ollama.npy",
         "meta": ROOT / "cleaning" / "chunks" / "physics" / "UniversityPhysics15e_embeddings_ollama_meta.jsonl",
     },
     "biology": {
-        # Merged biology course pack defaults
         "chunks": ROOT / "cleaning" / "chunks" / "biology" / "bio_merged_chunks.jsonl",
         "embeddings": ROOT / "cleaning" / "chunks" / "biology" / "bio_merged_embeddings_ollama.npy",
         "meta": ROOT / "cleaning" / "chunks" / "biology" / "bio_merged_embeddings_ollama_meta.jsonl",
+    },
+    "math": {
+        "chunks": ROOT / "cleaning" / "chunks" / "math" / "math_unified_chunks.jsonl",
+        "embeddings": ROOT / "cleaning" / "chunks" / "math" / "math_unified_embeddings_ollama.npy",
+        "meta": ROOT / "cleaning" / "chunks" / "math" / "math_unified_embeddings_ollama_meta.jsonl",
     },
 }
 
@@ -64,7 +66,6 @@ def embed_text(model: str, text: str) -> np.ndarray:
 
 
 def cosine_sim_matrix(query_vec: np.ndarray, mat: np.ndarray) -> np.ndarray:
-    # Normalize embeddings to unit length for cosine similarity
     mat_norm = mat / np.linalg.norm(mat, axis=1, keepdims=True)
     q_norm = query_vec / np.linalg.norm(query_vec)
     return mat_norm @ q_norm
@@ -76,18 +77,33 @@ def top_k(scores: np.ndarray, ids: List[str], k: int) -> List[Tuple[str, float]]
     return [(ids[i], float(scores[i])) for i in sorted_idxs]
 
 
+def retrieve_full_ranked(query: str, subject: str, model: str = DEFAULT_MODEL) -> List[Dict]:
+    chunks_path, emb_path, meta_path = get_paths(subject)
+    meta_ids = load_meta_ids(meta_path)
+    emb_matrix = np.load(emb_path)
+
+    q_vec = embed_text(model, query)
+    scores = cosine_sim_matrix(q_vec, emb_matrix)
+
+    ranked = np.argsort(-scores)
+
+    out = []
+    for idx in ranked:
+        out.append({"id": meta_ids[idx], "score": float(scores[idx])})
+    return out
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Retrieve top chunks for a query.")
     parser.add_argument("query", help="Query text")
     parser.add_argument("--model", default=DEFAULT_MODEL, help="Ollama embedding model name")
     parser.add_argument("--top-k", type=int, default=15, help="Number of results to return")
-    parser.add_argument("--subject", default="chemistry", help="Subject key (chemistry, physics, ...)")
+    parser.add_argument("--subject", default="chemistry", help="Subject key (chemistry, physics, math, ...)")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-
     chunks_path, emb_path, meta_path = get_paths(args.subject)
 
     if not (emb_path.exists() and meta_path.exists() and chunks_path.exists()):

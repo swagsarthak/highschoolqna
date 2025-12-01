@@ -37,6 +37,13 @@ SUBJECTS = {
         "title": "Biology",
         "tagline": "11 std Biology",
     },
+    "math": {
+        "chunks": ROOT / "cleaning" / "chunks" / "math" / "math_unified_chunks.jsonl",
+        "embeddings": ROOT / "cleaning" / "chunks" / "math" / "math_unified_embeddings_ollama.npy",
+        "meta": ROOT / "cleaning" / "chunks" / "math" / "math_unified_embeddings_ollama_meta.jsonl",
+        "title": "Math",
+        "tagline": "Merged math course pack",
+    },
 }
 
 DEFAULT_EMBED_MODEL = "mxbai-embed-large"
