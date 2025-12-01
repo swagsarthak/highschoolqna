@@ -19,7 +19,6 @@ cleaning/clean_text/
 cleaning/text_workdir/
 cleaning/images/
 app/__pycache__/
-*.npy
 notes.txt
 
 # Eval outputs
