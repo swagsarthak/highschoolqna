@@ -17,7 +17,6 @@ OrganicChemistry-SAMPLE_9ADraVJ.pdf
 # Derived artifacts
 cleaning/clean_text/
 cleaning/text_workdir/
-cleaning/chunks/
 cleaning/images/
 app/__pycache__/
 *.npy

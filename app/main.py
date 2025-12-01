@@ -20,7 +20,7 @@ SUBJECTS = {
         "embeddings": ROOT / "cleaning" / "chunks" / "chemistry" / "OrganicChemistry-SAMPLE_9ADraVJ_embeddings_ollama.npy",
         "meta": ROOT / "cleaning" / "chunks" / "chemistry" / "OrganicChemistry-SAMPLE_9ADraVJ_embeddings_ollama_meta.jsonl",
         "title": "Chemistry",
-        "tagline": "Organic Chemistry (OpenStax sample)",
+        "tagline": "Organic Chemistry",
     },
     "physics": {
         # Update after generating physics chunks/embeddings
@@ -28,14 +28,14 @@ SUBJECTS = {
         "embeddings": ROOT / "cleaning" / "chunks" / "physics" / "UniversityPhysics15e_embeddings_ollama.npy",
         "meta": ROOT / "cleaning" / "chunks" / "physics" / "UniversityPhysics15e_embeddings_ollama_meta.jsonl",
         "title": "Physics",
-        "tagline": "University Physics 15e (OpenStax)",
+        "tagline": "University Physics",
     },
     "biology": {
         "chunks": ROOT / "cleaning" / "chunks" / "biology" / "bio_merged_chunks.jsonl",
         "embeddings": ROOT / "cleaning" / "chunks" / "biology" / "bio_merged_embeddings_ollama.npy",
         "meta": ROOT / "cleaning" / "chunks" / "biology" / "bio_merged_embeddings_ollama_meta.jsonl",
         "title": "Biology",
-        "tagline": "Merged biology course pack",
+        "tagline": "11 std Biology",
     },
 }
 
