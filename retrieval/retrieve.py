@@ -23,6 +23,12 @@ SUBJECTS = {
         "embeddings": ROOT / "cleaning" / "chunks" / "physics" / "UniversityPhysics15e_embeddings_ollama.npy",
         "meta": ROOT / "cleaning" / "chunks" / "physics" / "UniversityPhysics15e_embeddings_ollama_meta.jsonl",
     },
+    "math": {
+        "chunks": ROOT / "cleaning" / "chunks" / "math" / "math_unified_chunks.jsonl",
+        "embeddings": ROOT / "cleaning" / "chunks" / "math" / "math_unified_embeddings_ollama.npy",
+        "meta": ROOT / "cleaning" / "chunks" / "math" / "math_unified_embeddings_ollama_meta.jsonl",
+    },
+
 }
 
 DEFAULT_MODEL = "mxbai-embed-large"
@@ -68,6 +74,21 @@ def top_k(scores: np.ndarray, ids: List[str], k: int) -> List[Tuple[str, float]]
     idxs = np.argpartition(-scores, kth=min(k, len(scores) - 1))[:k]
     sorted_idxs = idxs[np.argsort(-scores[idxs])]
     return [(ids[i], float(scores[i])) for i in sorted_idxs]
+def retrieve_full_ranked(query: str, subject: str, model: str = DEFAULT_MODEL) -> List[Dict]:
+    chunks_path, emb_path, meta_path = get_paths(subject)
+    meta_ids = load_meta_ids(meta_path)
+    emb_matrix = np.load(emb_path)
+
+    q_vec = embed_text(model, query)
+    scores = cosine_sim_matrix(q_vec, emb_matrix)
+
+    ranked = np.argsort(-scores)
+
+    out = []
+    for idx in ranked:
+        out.append({"id": meta_ids[idx], "score": float(scores[idx])})
+    return out
+
 
 
 def parse_args() -> argparse.Namespace:

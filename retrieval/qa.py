@@ -24,6 +24,11 @@ SUBJECTS = {
         "embeddings": ROOT / "cleaning" / "chunks" / "physics" / "UniversityPhysics15e_embeddings_ollama.npy",
         "meta": ROOT / "cleaning" / "chunks" / "physics" / "UniversityPhysics15e_embeddings_ollama_meta.jsonl",
     },
+    "math": {
+        "chunks": ROOT / "cleaning" / "chunks" / "math" / "math_unified_chunks.jsonl",
+        "embeddings": ROOT / "cleaning" / "chunks" / "math" / "math_unified_embeddings_ollama.npy",
+        "meta": ROOT / "cleaning" / "chunks" / "math" / "math_unified_embeddings_ollama_meta.jsonl",
+    },
 }
 
 DEFAULT_EMBED_MODEL = "mxbai-embed-large"
