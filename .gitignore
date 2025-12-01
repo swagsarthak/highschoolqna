@@ -21,6 +21,7 @@ cleaning/chunks/
 cleaning/images/
 app/__pycache__/
 *.npy
+notes.txt
 
 # Eval outputs
 eval/plots*/
