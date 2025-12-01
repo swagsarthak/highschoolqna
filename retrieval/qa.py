@@ -10,7 +10,12 @@ from typing import Dict, List, Tuple
 import numpy as np
 import requests
 from requests import HTTPError
-
+SUBJECT_LLM = {
+    "chemistry": "llama3",
+    "physics": "llama3",
+    "biology": "llama3",
+    "math": "qwen2.5:1.5b",
+}
 ROOT = Path(__file__).resolve().parent.parent
 SUBJECTS = {
     "chemistry": {
@@ -113,10 +118,12 @@ def build_prompt(query: str, contexts: List[Tuple[str, str]]) -> str:
         f"Snippet {i+1}:\n{text[:1200]}" for i, (_cid, text) in enumerate(contexts)
     )
     return (
-        "Answer using the provided context. Synthesize and explain; infer through minor typos in the question. "
-        "Only say you don't know if the context has no relevant information. "
-        "Do not mention chunk IDs, page IDs, or section numbers unless the user asks for them. "
-        "Answer in natural prose without bracketed identifiers.\n\n"
+        "Answer the question using ONLY the provided context.\n"
+        "- Be CONCISE but ACCURATE: extract the relevant information and state it clearly.\n"
+        "- If the context contains the answer, give it directly in 1-4 sentences.\n"
+        "- If the context does NOT contain information to answer the question, say: "
+        "'This information is not covered in the available materials.'\n"
+        "- Never mention snippet numbers, chunk IDs, or source identifiers.\n\n"
         f"Context:\n{context_block}\n\n"
         f"Question: {query}\n\nAnswer:"
     )
@@ -128,7 +135,7 @@ def call_llm(model: str, prompt: str) -> str:
         "messages": [
             {
                 "role": "system",
-                "content": "You are a concise tutor. Use only the provided context. If relevant details exist, answer from them. Only say you don't know when nothing relevant is present. Do not include chunk IDs, page IDs, or section numbers unless explicitly asked by the user.",
+                "content": "You are a concise tutor. Give SHORT, direct answers using only the provided context. Never mention chunk IDs, snippet numbers, page IDs, or any source identifiers.",
             },
             {"role": "user", "content": prompt},
         ],
@@ -152,7 +159,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Retrieve + answer via Ollama LLM.")
     parser.add_argument("query", help="User question")
     parser.add_argument("--embed-model", default=DEFAULT_EMBED_MODEL, help="Ollama embedding model")
-    parser.add.add_argument("--llm-model", default=DEFAULT_LLM_MODEL, help="Ollama LLM for answering")
+    parser.add_argument("--llm-model", default=DEFAULT_LLM_MODEL, help="Ollama LLM for answering")
     parser.add_argument("--top-k", type=int, default=5, help="Number of contexts to include")
     parser.add_argument("--subject", default="chemistry", help="Subject key (chemistry, physics, biology, math)")
     return parser.parse_args()
@@ -179,7 +186,8 @@ def main() -> None:
     contexts: List[Tuple[str, str]] = [(cid, chunks.get(cid, "")) for cid, _score in results]
 
     prompt = build_prompt(args.query, contexts)
-    answer = call_llm(args.llm_model, prompt)
+    model = SUBJECT_LLM.get(args.subject, args.llm_model)
+    answer = call_llm(model, prompt)
 
     print("Answer:\n", answer)
     print("\nContexts used:")

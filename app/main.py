@@ -13,6 +13,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+SUBJECT_LLM = {
+    "chemistry": "llama3",
+    "physics": "llama3",
+    "biology": "llama3",
+    "math": "qwen2.5:1.5b",
+}
 ROOT = Path(__file__).resolve().parent.parent
 SUBJECTS = {
     "chemistry": {
@@ -184,10 +190,12 @@ def build_prompt(query: str, contexts: List[Tuple[str, str]]) -> str:
         f"Snippet {i+1}:\n{text[:1200]}" for i, (_cid, text) in enumerate(contexts)
     )
     return (
-        "Answer using the provided context. Synthesize and explain; minor typos in the question should be inferred. "
-        "Only say you don't know if the context has no relevant information. "
-        "Never mention chunk IDs, page IDs, or section numbers unless explicitly asked. "
-        "Answer in natural prose without bracketed identifiers.\n\n"
+        "Answer the question using ONLY the provided context.\n"
+        "- Be CONCISE but ACCURATE: extract the relevant information and state it clearly.\n"
+        "- If the context contains the answer, give it directly in 1-4 sentences.\n"
+        "- If the context does NOT contain information to answer the question, say: "
+        "'This information is not covered in the available materials.'\n"
+        "- Never mention snippet numbers, chunk IDs, or source identifiers.\n\n"
         f"Context:\n{context_block}\n\n"
         f"Question: {query}\n\nAnswer:"
     )
@@ -200,10 +208,8 @@ def call_llm(model: str, prompt: str) -> str:
             {
                 "role": "system",
                 "content": (
-                    "You are a concise tutor. Use the given context only. "
-                    "If the context contains relevant details, synthesize them into an answer. "
-                    "Only say you don't know when nothing relevant is present. "
-                    "Do not include chunk IDs, page IDs, or section numbers unless the user explicitly asks."
+                    "You are a concise tutor. Give SHORT, direct answers using only the provided context. "
+                    "Never mention chunk IDs, snippet numbers, page IDs, or any source identifiers."
                 ),
             },
             {"role": "user", "content": prompt},
@@ -221,21 +227,22 @@ def call_llm(model: str, prompt: str) -> str:
 
 
 def refine_answer(model: str, draft: str, contexts: List[Dict[str, str]]) -> str:
+    # Use numbered snippets instead of exposing internal chunk IDs
+    snippets_text = "\n".join(f"[{i+1}] {c['snippet']}" for i, c in enumerate(contexts))
     prompt = (
-        "Rewrite the draft into a clear, complete answer using ONLY the draft and the snippets. "
-        "Expand on ideas when the snippets provide support; keep factual density and specific details. "
-        "Do not invent or assume; if the draft hedges, keep the hedge. "
-        "Preserve any citations/identifiers already present. "
-        "Do not add chunk IDs, page IDs, or section numbers. "
-        "Vary phrasing from the draft while keeping keywords. "
-        "Use compact sentences; bullets are allowed if they improve readability.\n\n"
+        "Polish the draft into a SHORT, direct answer. Rules:\n"
+        "- Be concise: 1-3 sentences for simple questions, up to a short paragraph for complex ones.\n"
+        "- Do NOT mention snippet numbers, chunk IDs, page IDs, or any identifiers.\n"
+        "- Do NOT add hedging phrases like 'based on the snippets' or 'according to the context'.\n"
+        "- Just answer the question naturally as if you knew the answer.\n"
+        "- If uncertain, say so briefly.\n\n"
         f"Draft:\n{draft}\n\n"
-        f"Snippets:\n" + "\n".join(f"[{c['id']}] {c['snippet']}" for c in contexts)
+        f"Reference snippets:\n{snippets_text}"
     )
     payload = {
         "model": model,
         "messages": [
-            {"role": "system", "content": "You are a careful editor. Keep facts, improve clarity."},
+            {"role": "system", "content": "You are a concise editor. Make answers short and direct. Never mention source IDs."},
             {"role": "user", "content": prompt},
         ],
         "stream": False,
@@ -299,9 +306,9 @@ def qa(req: QARequest):
         context_payload.append({"id": cid, "score": f"{score:.4f}", "snippet": build_snippet(text)})
 
     prompt = build_prompt(req.query, contexts)
-    answer = call_llm(req.llm_model, prompt).strip()
+    model = SUBJECT_LLM.get(req.subject, req.llm_model)
+    print(f"[API QA] subject={req.subject}  llm_model={model}")
+    answer = call_llm(model, prompt).strip()
     if req.refine:
         answer = refine_answer(req.llm_model, answer, context_payload).strip()
     return QAResponse(answer=answer, contexts=context_payload)
-
-
