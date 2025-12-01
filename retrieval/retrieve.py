@@ -23,6 +23,12 @@ SUBJECTS = {
         "embeddings": ROOT / "cleaning" / "chunks" / "physics" / "UniversityPhysics15e_embeddings_ollama.npy",
         "meta": ROOT / "cleaning" / "chunks" / "physics" / "UniversityPhysics15e_embeddings_ollama_meta.jsonl",
     },
+    "biology": {
+        # Merged biology course pack defaults
+        "chunks": ROOT / "cleaning" / "chunks" / "biology" / "bio_merged_chunks.jsonl",
+        "embeddings": ROOT / "cleaning" / "chunks" / "biology" / "bio_merged_embeddings_ollama.npy",
+        "meta": ROOT / "cleaning" / "chunks" / "biology" / "bio_merged_embeddings_ollama_meta.jsonl",
+    },
 }
 
 DEFAULT_MODEL = "mxbai-embed-large"
@@ -74,7 +80,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Retrieve top chunks for a query.")
     parser.add_argument("query", help="Query text")
     parser.add_argument("--model", default=DEFAULT_MODEL, help="Ollama embedding model name")
-    parser.add_argument("--top-k", type=int, default=5, help="Number of results to return")
+    parser.add_argument("--top-k", type=int, default=15, help="Number of results to return")
     parser.add_argument("--subject", default="chemistry", help="Subject key (chemistry, physics, ...)")
     return parser.parse_args()
 

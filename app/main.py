@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -11,13 +12,6 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
-
-try:
-    import faiss  # type: ignore
-
-    FAISS_AVAILABLE = True
-except Exception:  # pragma: no cover
-    FAISS_AVAILABLE = False
 
 ROOT = Path(__file__).resolve().parent.parent
 SUBJECTS = {
@@ -53,7 +47,7 @@ CHAT_URL = "http://localhost:11434/api/chat"
 
 class QARequest(BaseModel):
     query: str = Field(..., description="User question")
-    top_k: int = Field(5, ge=1, le=10, description="Number of contexts to use")
+    top_k: int = Field(15, ge=1, le=20, description="Number of contexts to use")
     embed_model: str = Field(DEFAULT_EMBED_MODEL, description="Ollama embedding model")
     llm_model: str = Field(DEFAULT_LLM_MODEL, description="Ollama chat model")
     subject: str = Field("chemistry", description="Subject key (chemistry, physics, ...)")
@@ -93,7 +87,6 @@ def get_paths(subject: str) -> Tuple[Path, Path, Path]:
 
 
 DATA_CACHE: Dict[str, Tuple[Dict[str, str], List[str], np.ndarray]] = {}
-FAISS_CACHE: Dict[str, "faiss.Index"] = {}
 
 
 def get_data(subject: str) -> Tuple[Dict[str, str], List[str], np.ndarray]:
@@ -114,21 +107,6 @@ def get_data(subject: str) -> Tuple[Dict[str, str], List[str], np.ndarray]:
     return chunks, meta_ids, emb_matrix
 
 
-def get_faiss_index(subject: str, emb_matrix: np.ndarray) -> "faiss.Index":
-    if subject in FAISS_CACHE:
-        return FAISS_CACHE[subject]
-    if not FAISS_AVAILABLE:
-        raise RuntimeError("Faiss not installed; cannot build index.")
-    # Normalize for cosine; use inner product search.
-    norms = np.linalg.norm(emb_matrix, axis=1, keepdims=True) + 1e-12
-    base = emb_matrix / norms
-    dim = base.shape[1]
-    index = faiss.IndexFlatIP(dim)
-    index.add(base.astype(np.float32))
-    FAISS_CACHE[subject] = index
-    return index
-
-
 def embed_text(model: str, text: str) -> np.ndarray:
     resp = requests.post(EMBED_URL, json={"model": model, "input": [text]})
     if not resp.ok:
@@ -145,25 +123,64 @@ def cosine_sim_matrix(query_vec: np.ndarray, mat: np.ndarray) -> np.ndarray:
     return mat_norm @ q_norm
 
 
-def faiss_search(query_vec: np.ndarray, mat: np.ndarray, subject: str, k: int) -> np.ndarray:
-    index = get_faiss_index(subject, mat)
-    q = query_vec / (np.linalg.norm(query_vec) + 1e-12)
-    scores, _ = index.search(q[None, :].astype(np.float32), k)
-    return scores[0]
-
-
 def top_k(scores: np.ndarray, ids: List[str], k: int) -> List[Tuple[str, float]]:
     idxs = np.argpartition(-scores, kth=min(k, len(scores) - 1))[:k]
     sorted_idxs = idxs[np.argsort(-scores[idxs])]
     return [(ids[i], float(scores[i])) for i in sorted_idxs]
 
 
+STOPWORDS = {
+    "the",
+    "a",
+    "an",
+    "and",
+    "or",
+    "of",
+    "in",
+    "on",
+    "for",
+    "to",
+    "with",
+    "by",
+    "at",
+    "from",
+    "as",
+    "that",
+    "this",
+    "these",
+    "those",
+    "is",
+    "are",
+    "was",
+    "were",
+}
+
+
+def rerank_with_overlap(
+    query: str, results: List[Tuple[str, float]], chunks: Dict[str, str]
+) -> List[Tuple[str, float]]:
+    tokens = [t for t in re.findall(r"\w+", query.lower()) if len(t) > 2 and t not in STOPWORDS]
+    if not tokens:
+        return results
+    scored: List[Tuple[str, float, float]] = []
+    for cid, base in results:
+        text = chunks.get(cid, "").lower()
+        overlap = sum(1 for tok in tokens if tok in text)
+        combined = base + 0.05 * overlap
+        scored.append((cid, base, combined))
+    scored.sort(key=lambda x: x[2], reverse=True)
+    return [(cid, base) for cid, base, _ in scored]
+
+
 def build_prompt(query: str, contexts: List[Tuple[str, str]]) -> str:
-    context_block = "\n\n".join(f"[{cid}]\n{text[:1200]}" for cid, text in contexts)
+    context_block = "\n\n".join(
+        f"Snippet {i+1}:\n{text[:1200]}" for i, (_cid, text) in enumerate(contexts)
+    )
     return (
-        "Use only the provided context to answer. "
-        "Do not cite chunk IDs or section numbers unless explicitly asked. "
-        "If the answer is not in the context, say you don't know.\n\n"
+        "Answer using the provided context. Synthesize and explain; minor typos in the question should be inferred. "
+        "Only say you don't know if the context has no relevant information. "
+        "Never mention chunk IDs, page IDs, or section numbers unless explicitly asked. "
+        "Answer in natural prose without bracketed identifiers.\n\n"
         f"Context:\n{context_block}\n\n"
         f"Question: {query}\n\nAnswer:"
     )
@@ -175,7 +192,12 @@ def call_llm(model: str, prompt: str) -> str:
         "messages": [
             {
                 "role": "system",
-                "content": "You are a concise tutor. Use the given context only. Do not cite sections or chunk IDs unless asked.",
+                "content": (
+                    "You are a concise tutor. Use the given context only. "
+                    "If the context contains relevant details, synthesize them into an answer. "
+                    "Only say you don't know when nothing relevant is present. "
+                    "Do not include chunk IDs, page IDs, or section numbers unless the user explicitly asks."
+                ),
             },
             {"role": "user", "content": prompt},
         ],
@@ -193,9 +215,13 @@ def call_llm(model: str, prompt: str) -> str:
 
 def refine_answer(model: str, draft: str, contexts: List[Dict[str, str]]) -> str:
     prompt = (
-        "Polish the answer for clarity and concision using ONLY the provided draft and snippets. "
-        "Do not add new facts. Keep any citations or identifiers if present. "
-        "Respond with a short, reader-friendly answer.\n\n"
+        "Rewrite the draft into a clear, complete answer using ONLY the draft and the snippets. "
+        "Expand on ideas when the snippets provide support; keep factual density and specific details. "
+        "Do not invent or assume; if the draft hedges, keep the hedge. "
+        "Preserve any citations/identifiers already present. "
+        "Do not add chunk IDs, page IDs, or section numbers. "
+        "Vary phrasing from the draft while keeping keywords. "
+        "Use compact sentences; bullets are allowed if they improve readability.\n\n"
         f"Draft:\n{draft}\n\n"
         f"Snippets:\n" + "\n".join(f"[{c['id']}] {c['snippet']}" for c in contexts)
     )
@@ -255,11 +281,8 @@ def subjects():
 def qa(req: QARequest):
     chunks, meta_ids, emb_matrix = get_data(req.subject)
     q_vec = embed_text(req.embed_model, req.query)
-    if FAISS_AVAILABLE:
-        scores = faiss_search(q_vec, emb_matrix, req.subject, req.top_k)
-    else:
-        scores = cosine_sim_matrix(q_vec, emb_matrix)
-    results = top_k(scores, meta_ids, req.top_k)
+    scores = cosine_sim_matrix(q_vec, emb_matrix)
+    results = rerank_with_overlap(req.query, top_k(scores, meta_ids, req.top_k), chunks)
 
     contexts: List[Tuple[str, str]] = []
     context_payload: List[Dict[str, str]] = []

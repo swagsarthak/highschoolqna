@@ -1,0 +1,75 @@
+Book-based Retrieval-Augmented Generation (RAG) — 15-minute speaking notes
+
+Opening (≈1 min)
+- Goal: answer questions grounded in book content to cut hallucinations.
+- Why now: LLMs are strong, but ungrounded; books are authoritative sources.
+
+Concept & pipeline (≈2 min)
+- RAG loop: ingest → chunk → embed → index → retrieve → generate with citations.
+- Principle: retrieval constrains the LLM; citations build trust.
+
+Ingestion & cleaning (≈2 min)
+- Sources: PDFs/epubs/HTML; OCR for scanned pages.
+- Clean: strip headers/footers/page numbers, fix hyphens/quotes, drop TOC noise.
+- Keep structure: chapters, sections, page numbers, figure/table IDs.
+
+Chunking & metadata (≈2 min)
+- Chunk 300–600 tokens with 10–20% overlap; align to headings when possible.
+- Preserve headings + page/section metadata; store figure/table captions as nearby chunks.
+- Deduplicate near-identical chunks to reduce index noise.
+
+Embeddings & indexing (≈2 min)
+- Start with general embeddings (e.g., BGE-base, MiniLM for speed); domain-tuned if jargon-heavy.
+- Vector DB (e.g., FAISS/Milvus) with filters (chapter/section) and optional hybrid BM25+dense.
+- Add reranker (cross-encoder) on top-k to boost precision for long books.
+
+Retrieval strategy (≈2 min)
+- Default: top-k dense retrieval; hybrid for keyword-heavy queries.
+- Query rewrite/expansion via LLM for vague asks; allow user to constrain chapter/section.
+- Hierarchical retrieval: chapter → section → chunk for very long documents.
+
+Generation & grounding (≈2 min)
+- Prompt: “answer only from provided context; include citations; say if unknown.”
+- Keep context window tight to best passages; avoid stuffing irrelevant chunks.
+- Optional: hidden chain-of-thought; surface concise, cited answer only.
+
+Evaluation (≈2 min)
+- Retrieval: recall@k, MRR/nDCG; spot-check cross-chapter and figure/table queries.
+- Answers: faithfulness/groundedness (LLM judge vs context), SME review for accuracy.
+- UX: latency and completeness; user feedback loop to down-rank bad chunks.
+
+Challenges & mitigations (≈2 min)
+- Noisy OCR/layout: stronger parsing, line-merge heuristics, header/footer removal.
+- Long documents: hierarchical retrieval, better chunking boundaries, reranking.
+- Ambiguity: clarifying follow-ups; allow “not found” when evidence is weak.
+- Updates: re-ingest and re-embed changed chapters; version indexes.
+
+Ops & UX (≈1 min)
+- Transparency: show citations (chapter/page) and link to source snippets.
+- Cost/latency: smaller embeddings, tuned top-k, rerank only on shortlists, cache common queries.
+- Governance: respect IP rights; secure storage; audit logs for queries.
+
+Closing (≈30s)
+- RAG makes LLMs factual by grounding in curated book text; success depends on clean ingestion, strong retrieval, disciplined prompting, and continuous evaluation.
+
+Q&A (ready-to-use)
+- Q: Why choose RAG over fine-tuning?
+  A: RAG is cheaper to update (re-index), keeps grounding/citations, reduces memorization risk; fine-tuning is heavier and less transparent.
+- Q: How do you chunk books effectively?
+  A: 300–600 tokens with overlap, aligned to headings; keep metadata (chapter/page); test recall@k to tune sizes.
+- Q: Which embedding model should I pick?
+  A: Start general (BGE-base/MiniLM); if domain jargon dominates, move to domain-tuned embeddings and measure retrieval lift.
+- Q: How do you handle multi-hop questions across chapters?
+  A: Query expansion + higher top-k, rerankers, and hierarchical retrieval (chapter-first).
+- Q: How do you prevent hallucinations?
+  A: Constrain prompt to provided context, require citations, trim context to best chunks, and allow “insufficient evidence.”
+- Q: How do you cite sources?
+  A: Store chapter/page in metadata; template answers to show (Chapter X, p.Y); surface snippet links in UI.
+- Q: How do you deal with tables/figures?
+  A: Extract captions and surrounding text as separate chunks; OCR for figures; reference figure IDs in metadata.
+- Q: What if the PDF/OCR is messy?
+  A: Layout-preserving OCR, header/footer removal, de-hyphenation, line merge; re-check retrieval noise after cleanup.
+- Q: When is hybrid search useful?
+  A: When queries have rare keywords/names; combine BM25 + dense and rerank to balance precision/recall.
+- Q: How do you manage costs and latency?
+  A: Smaller embeddings, tuned k, rerank only shortlists, batching, and caching frequent queries.

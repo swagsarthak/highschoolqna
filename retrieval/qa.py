@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -23,6 +24,11 @@ SUBJECTS = {
         "chunks": ROOT / "cleaning" / "chunks" / "physics" / "UniversityPhysics15e_chunks.jsonl",
         "embeddings": ROOT / "cleaning" / "chunks" / "physics" / "UniversityPhysics15e_embeddings_ollama.npy",
         "meta": ROOT / "cleaning" / "chunks" / "physics" / "UniversityPhysics15e_embeddings_ollama_meta.jsonl",
+    },
+    "biology": {
+        "chunks": ROOT / "cleaning" / "chunks" / "biology" / "bio_merged_chunks.jsonl",
+        "embeddings": ROOT / "cleaning" / "chunks" / "biology" / "bio_merged_embeddings_ollama.npy",
+        "meta": ROOT / "cleaning" / "chunks" / "biology" / "bio_merged_embeddings_ollama_meta.jsonl",
     },
 }
 
@@ -76,14 +82,58 @@ def top_k(scores: np.ndarray, ids: List[str], k: int) -> List[Tuple[str, float]]
     return [(ids[i], float(scores[i])) for i in sorted_idxs]
 
 
+STOPWORDS = {
+    "the",
+    "a",
+    "an",
+    "and",
+    "or",
+    "of",
+    "in",
+    "on",
+    "for",
+    "to",
+    "with",
+    "by",
+    "at",
+    "from",
+    "as",
+    "that",
+    "this",
+    "these",
+    "those",
+    "is",
+    "are",
+    "was",
+    "were",
+}
+
+
+def rerank_with_overlap(
+    query: str, results: List[Tuple[str, float]], chunks: Dict[str, str]
+) -> List[Tuple[str, float]]:
+    tokens = [t for t in re.findall(r"\w+", query.lower()) if len(t) > 2 and t not in STOPWORDS]
+    if not tokens:
+        return results
+    scored: List[Tuple[str, float, float]] = []
+    for cid, base in results:
+        text = chunks.get(cid, "").lower()
+        overlap = sum(1 for tok in tokens if tok in text)
+        combined = base + 0.05 * overlap
+        scored.append((cid, base, combined))
+    scored.sort(key=lambda x: x[2], reverse=True)
+    return [(cid, base) for cid, base, _ in scored]
+
+
 def build_prompt(query: str, contexts: List[Tuple[str, str]]) -> str:
     context_block = "\n\n".join(
-        f"[{cid}]\n{text[:1200]}" for cid, text in contexts
+        f"Snippet {i+1}:\n{text[:1200]}" for i, (_cid, text) in enumerate(contexts)
     )
     return (
-        "Use only the provided context to answer the user. "
-        "If the answer is not in the context, say you don't know. "
-        "Do not mention chunk IDs or section numbers unless the user asks for citations.\n\n"
+        "Answer using the provided context. Synthesize and explain; infer through minor typos in the question. "
+        "Only say you don't know if the context has no relevant information. "
+        "Do not mention chunk IDs, page IDs, or section numbers unless the user asks for them. "
+        "Answer in natural prose without bracketed identifiers.\n\n"
         f"Context:\n{context_block}\n\n"
         f"Question: {query}\n\nAnswer:"
     )
@@ -95,7 +145,7 @@ def call_llm(model: str, prompt: str) -> str:
         "messages": [
             {
                 "role": "system",
-                "content": "You are a concise tutor. Use the given context only. Do not cite section numbers or chunk IDs unless explicitly asked.",
+                "content": "You are a concise tutor. Use only the provided context. If relevant details exist, answer from them. Only say you don't know when nothing relevant is present. Do not include chunk IDs, page IDs, or section numbers unless explicitly asked by the user.",
             },
             {"role": "user", "content": prompt},
         ],
@@ -140,7 +190,7 @@ def main() -> None:
 
     q_vec = embed_text(args.embed_model, args.query)
     scores = cosine_sim_matrix(q_vec, emb_matrix)
-    results = top_k(scores, meta_ids, args.top_k)
+    results = rerank_with_overlap(args.query, top_k(scores, meta_ids, args.top_k), chunks)
 
     contexts: List[Tuple[str, str]] = []
     for cid, _score in results:
